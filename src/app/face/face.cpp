@@ -28,6 +28,12 @@
 #if defined(DRISHTI_USE_IMSHOW)
 #  include "imshow/imshow.h"
 #endif
+
+#if defined(DRISHTI_BUILD_EOS)
+#  include "drishti/face/FaceMeshMapperLandmark.h"
+#  include "drishti/face/FaceMeshMapperLandmarkContour.h"
+#  include "drishti/face/FaceMesh.h"
+#endif
 // clang-format on
 
 #include "videoio/VideoSourceCV.h"
@@ -132,6 +138,35 @@ protected:
     PaddedImage padded;
 };
 
+#if defined(DRISHTI_BUILD_EOS)
+#  include "drishti/face/FaceMeshMapperLandmark.h"
+#  include "drishti/face/FaceMeshMapperLandmarkContour.h"
+#  include "drishti/face/FaceMesh.h"
+using FaceMeshMapperPtr = std::unique_ptr<drishti::face::FaceMeshMapper>;
+#endif
+
+using FaceDetectorPtr = std::unique_ptr<drishti::face::FaceDetector>;
+
+struct FaceDetectorBundle
+{
+    FaceDetectorPtr faceDetector;
+#if defined(DRISHTI_BUILD_EOS)
+    FaceMeshMapperPtr faceMeshMaker;
+#endif
+};
+
+struct FaceModelBundle
+{
+    FaceModelBundle() = default;
+    FaceModelBundle(const drishti::face::FaceModel &face) : face(face) {}
+    
+    drishti::face::FaceModel face;
+    
+#if defined(DRISHTI_BUILD_EOS)
+    drishti::face::FaceMeshMapper::Result mesh;
+#endif
+};
+
 int gauze_main(int argc, char** argv)
 {
     const auto argumentCount = argc;
@@ -154,6 +189,10 @@ int gauze_main(int argc, char** argv)
     double cascCal = 0.0;
     int minWidth = -1; // minimum object width
 
+#if defined(DRISHTI_BUILD_EOS)
+    drishti::face::FaceMeshMapperLandmarkContour::Assets assets;
+#endif
+    
     // Full set of models must be specified:
     std::string sFaceDetector;
     std::string sFaceDetectorMean;
@@ -177,6 +216,14 @@ int gauze_main(int argc, char** argv)
         ("M,mean", "Face detector mean", cxxopts::value<std::string>(sFaceDetectorMean))
         ("R,regressor", "Face regressor", cxxopts::value<std::string>(sFaceRegressor))
         ("E,eye", "Eye model", cxxopts::value<std::string>(sEyeRegressor))
+    
+#if defined(DRISHTI_BUILD_EOS)
+        ("3dmm", "3D dephormable model", cxxopts::value<std::string>(assets.model))
+        ("mapping", "Landmark mapping", cxxopts::value<std::string>(assets.mappings))
+        ("model-contour", "Model contour indices", cxxopts::value<std::string>(assets.contour))
+        ("edge-topology", "Model's precomputed edge topology", cxxopts::value<std::string>(assets.edgetopology))
+        ("blendshapes", "Blendshapes", cxxopts::value<std::string>(assets.blendshapes))
+#endif
     
         // Output parameters:
         ("e,eyes", "Crop eyes", cxxopts::value<bool>(doEyes))
@@ -256,15 +303,22 @@ int gauze_main(int argc, char** argv)
     auto video = drishti::videoio::VideoSourceCV::create(sInput);
 
     // Allocate resource manager:
-    using FaceDetectorPtr = std::unique_ptr<drishti::face::FaceDetector>;
-    drishti::core::LazyParallelResource<std::thread::id, FaceDetectorPtr> manager = [&]() {
+    using FaceDetectorBundlePtr = std::unique_ptr<FaceDetectorBundle>;
+    drishti::core::LazyParallelResource<std::thread::id, FaceDetectorBundlePtr> manager = [&]() {
+
+        auto bundle = drishti::core::make_unique<FaceDetectorBundle>();
+
+        // Create the face detector
+        auto& detector = bundle->faceDetector;
+        
         auto factory = std::make_shared<drishti::face::FaceDetectorFactory>();
         factory->sFaceDetector = sFaceDetector;
         factory->sFaceRegressor = sFaceRegressor;
         factory->sEyeRegressor = sEyeRegressor;
         factory->sFaceDetectorMean = sFaceDetectorMean;
-
-        FaceDetectorPtr detector = drishti::core::make_unique<drishti::face::FaceDetector>(*factory);
+        
+        // ### Create the face detector ###
+        detector = drishti::core::make_unique<drishti::face::FaceDetector>(*factory);
         detector->setScaling(scale);
         if (detector)
         {
@@ -289,8 +343,14 @@ int gauze_main(int argc, char** argv)
                 detector.release();
             }
         }
-
-        return detector;
+        
+#if defined(DRISHTI_BUILD_EOS)
+        // ### Create the face mesh ###
+        auto& mapper = bundle->faceMeshMaker;
+        mapper = drishti::core::make_unique<drishti::face::FaceMeshMapperLandmarkContour>(assets);
+#endif
+        
+        return bundle;
     };
 
     std::size_t total = 0;
@@ -298,13 +358,15 @@ int gauze_main(int argc, char** argv)
     // Parallel loop:
     drishti::core::ParallelHomogeneousLambda harness = [&](int i) {
         // Get thread specific segmenter lazily:
-        auto& detector = manager[std::this_thread::get_id()];
-        assert(detector);
+        auto& bundle = manager[std::this_thread::get_id()];
+        assert(bundle);
+        auto& detector = bundle->faceDetector;
 
         // Load current image:
         auto frame = (*video)(i);
+        video->setOutputFormat(drishti::videoio::VideoSourceCV::BGR);
+        
         const auto& image = frame.image;
-
         if (!image.empty())
         {
             cv::Mat Irgb;
@@ -317,6 +379,20 @@ int gauze_main(int argc, char** argv)
             (*detector)(resizer.getPlanar(), resizer.getPadded(), faces, Hdr);
 
             resizer(faces);
+            
+            // Map returned faces into bundles for additional processing
+            std::vector<FaceModelBundle> faceMeshes(faces.size());
+            std::transform(faces.begin(), faces.end(), faceMeshes.begin(), [](const drishti::face::FaceModel &face) {
+                return FaceModelBundle { face };
+            });
+            
+#if defined(DRISHTI_BUILD_EOS)
+            auto& mapper = bundle->faceMeshMaker;
+            for (auto &face : faceMeshes)
+            {
+                face.mesh = (*mapper)(*face.face.points, image);
+            }
+#endif
 
             if (!doPositiveOnly || (faces.size() > 0))
             {
@@ -365,7 +441,16 @@ int gauze_main(int argc, char** argv)
                 if (doAnnotation)
                 {
                     cv::Mat canvas = image.clone();
+
+#if defined(DRISHTI_BUILD_EOS)
+                    for(auto &f : faceMeshes)
+                    {
+                       drishti::face::drawWireFrame(canvas, f.mesh);
+                    }
+#else
                     drawObjects(canvas, faces);
+#endif
+                    
                     cv::imwrite(filename + "_faces.png", canvas);
 
 #if defined(DRISHTI_USE_IMSHOW)

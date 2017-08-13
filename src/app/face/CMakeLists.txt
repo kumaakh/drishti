@@ -8,6 +8,10 @@ if(DRISHTI_USE_IMSHOW)
   target_compile_definitions(${test_app} PUBLIC DRISHTI_USE_IMSHOW)
 endif()
 
+if(DRISHTI_BUILD_EOS)
+  target_compile_definitions(${test_app} PUBLIC DRISHTI_BUILD_EOS)
+endif()
+
 #include "videoio/VideoSource.h"
 target_include_directories(${test_app} PUBLIC "$<BUILD_INTERFACE:${DRISHTI_APP_DIRECTORIES}>")
 
