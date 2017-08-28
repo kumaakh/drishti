@@ -44,16 +44,19 @@ endif()
 
 if(DRISHTI_BUILD_HCI)
   sugar_files(DRISHTI_DRISHTI_SRCS
-    FaceTracker.cpp
     Context.cpp
+    FaceTracker.cpp
+    Sensor.cpp
     )
   sugar_files(DRISHTI_DRISHTI_HDRS_PUBLIC
+    Context.hpp
+    ContextImpl.h # private
     Face.hpp
     FaceMonitorAdapter.h
     FaceTracker.hpp
+    Sensor.hpp
+    SensorImpl.h # private
     VideoFrame.hpp
-    Context.hpp
-    ContextImpl.h # private
     drishti_gl.hpp    
     )
 endif()

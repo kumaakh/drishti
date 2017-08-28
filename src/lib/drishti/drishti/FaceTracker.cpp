@@ -11,6 +11,7 @@
 #include "drishti/FaceTracker.hpp"
 #include "drishti/ContextImpl.h"
 #include "drishti/FaceMonitorAdapter.h"
+#include "drishti/SensorImpl.h"
 
 #include "drishti/face/Face.h"
 #include "drishti/hci/FaceFinder.h"

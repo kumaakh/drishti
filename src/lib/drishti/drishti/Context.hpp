@@ -18,9 +18,7 @@
 #include "drishti/drishti_sdk.hpp"
 #include "drishti/drishti_gl.hpp"
 #include "drishti/Image.hpp"
-
-// Note: This must be a public header
-#include "drishti/sensor/Sensor.h"
+#include "drishti/Sensor.hpp"
 
 #include <memory>
 
@@ -30,7 +28,7 @@ class DRISHTI_EXPORT Context
 {
 public:
     class Impl;
-    Context(const drishti::sensor::SensorModel& sensor);
+    Context(const drishti::sdk::SensorModel& sensor);
     ~Context();
 
     Impl* get() { return m_impl.get(); }

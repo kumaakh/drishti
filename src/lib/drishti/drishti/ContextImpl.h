@@ -30,7 +30,7 @@ _DRISHTI_SDK_BEGIN
 class Context::Impl
 {
 public:
-    Impl(const drishti::sensor::SensorModel& sensor);
+    Impl(const drishti::sdk::SensorModel& sensor);
 
     std::shared_ptr<drishti::sensor::SensorModel>& getSensor() { return m_sensor; }
     std::shared_ptr<spdlog::logger>& getLogger() { return m_logger; }
