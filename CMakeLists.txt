@@ -259,8 +259,8 @@ option(DRISHTI_SERIALIZE_WITH_CVMATIO "Perform serialization with cvmatio" ON)
 # DRISHIT_BUILD_INTEGRATION_TESTS:
 # ${DRISHTISDK}/src/examples/integration/
 
-option(DRISHTI_BUILD_BENCHMARKS "Build internal benchmarks (size and speed)." ON)
-option(DRISHTI_BUILD_TESTS "Build and run internal unit tests." ON)
+option(DRISHTI_BUILD_BENCHMARKS "Build internal benchmarks (size and speed)." OFF)
+option(DRISHTI_BUILD_TESTS "Build and run internal unit tests." OFF)
 option(DRISHTI_BUILD_INTEGRATION_TESTS "Build and run tests for installed libraries." OFF)
 
 string(COMPARE EQUAL "$ENV{TRAVIS}" "true" travis_ci)
