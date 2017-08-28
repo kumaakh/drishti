@@ -108,7 +108,7 @@ set(DRISHTI_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/src/lib")
 # and the CI builds are likely to terminate and report
 # an error.
 
-option(DRISHTI_BUILD_SHARED_SDK "Build shared SDK" ON)
+option(DRISHTI_BUILD_SHARED_SDK "Build shared SDK" OFF)
 option(DRISHTI_BUILD_MERGED_SDK "Merge all static dependencies" OFF)
 
 option(DRISHTI_COPY_3RDPARTY_LICENSES "Install 3rd party licenses" OFF)
