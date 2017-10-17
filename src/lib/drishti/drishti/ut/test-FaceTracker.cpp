@@ -152,6 +152,7 @@ protected:
         return std::make_shared<drishti::sdk::FaceTracker>(&context, factory);
     }
 
+#if defined(DRISHTI_DO_GPU_TESTING)
     void runTest(bool doCpu, bool doAsync)
     {
         // Instantiate a face finder and register a callback:
@@ -167,6 +168,7 @@ protected:
             (*tracker)(frame);
         }
     }
+#endif
 
 #if defined(DRISHTI_BUILD_C_INTERFACE)
     std::shared_ptr<drishti::sdk::FaceTracker> createC(const cv::Size& size, int orientation, bool doThreads)
@@ -331,14 +333,16 @@ protected:
     cv::Mat image, truth;
 };
 
+#if defined(DRISHTI_DO_GPU_TESTING)
 TEST_F(FaceTest, RunSimpleTest)
 {
     static const bool doCpu = false;
     static const bool doAsync = true;
     runTest(doCpu, doAsync);
 }
+#endif
 
-#if defined(DRISHTI_BUILD_C_INTERFACE)
+#if defined(DRISHTI_DO_GPU_TESTING) && defined(DRISHTI_BUILD_C_INTERFACE)
 TEST_F(FaceTest, RunSimpleTestC)
 {
     static const bool doCpu = true;

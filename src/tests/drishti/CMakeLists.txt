@@ -49,7 +49,6 @@ if(WIN32)
     )
 endif()
 
-
 gauze_add_test(
   NAME ${test_name}
   COMMAND ${test_app}
