@@ -10,6 +10,7 @@
 
 #include "videoio/VideoSourceCV.h"
 #include "videoio/VideoSourceStills.h"
+#include "videoio/VideoSourceCVWebCam.h"
 #include "videoio/VideoSourceTest.h"
 #include "drishti/core/drishti_stdlib_string.h"
 #include "drishti/core/drishti_string_hash.h"
@@ -56,9 +57,11 @@ std::shared_ptr<VideoSourceCV> VideoSourceCV::create(const std::string& filename
         case ".png"_hash:
         case ".jpg"_hash:
         case ".jpeg"_hash:
+		case ".bmp"_hash:
             return std::make_shared<VideoSourceStills>(std::vector<std::string>{ filename });
             break;
-
+		case ".webcam"_hash:
+			return std::make_shared<VideoSourceCVWebCam>(filename);
         // not supported
         default:
             CV_Assert(false);
