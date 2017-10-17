@@ -49,7 +49,7 @@ int gauze_main(int argc, char** argv)
     }
 
     drishti::videoio::VideoSourceCV::Frame frame;
-    for (int i = 0; i < video->count(); i++)
+    for (int i = 0; i < 10; i++)
     {
         frame = (*video)(i);
         if (frame.image.empty())
