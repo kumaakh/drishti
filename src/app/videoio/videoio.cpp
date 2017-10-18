@@ -49,7 +49,7 @@ int gauze_main(int argc, char** argv)
     }
 
     drishti::videoio::VideoSourceCV::Frame frame;
-    for (int i = 0; i < 10; i++)
+    for (int i = 0; i < 30; i++)
     {
         frame = (*video)(i);
         if (frame.image.empty())
@@ -58,11 +58,11 @@ int gauze_main(int argc, char** argv)
         }
 
         std::stringstream ss;
-        ss << sOutput << "/frame_" << std::setw(4) << std::setfill('0') << i++ << ".png";
+        ss << sOutput << "/frame_" << std::setw(4) << std::setfill('0') << i << ".png";
         cv::imwrite(ss.str(), frame.image);
     }
-    while (!frame.image.empty())
-        ;
+    //while (!frame.image.empty())
+    //    ;
 
     return 0;
 }

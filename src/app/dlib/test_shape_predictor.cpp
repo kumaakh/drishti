@@ -9,7 +9,7 @@ typedef unsigned char boolean;
 #define TRUE 1
 #define FALSE 0
 #define HAVE_BOOLEAN
-#include "jpeglib.h"
+
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -37,7 +37,7 @@ typedef unsigned char boolean;
 #include "cxxopts.hpp"
 
 #include <iostream>
-
+#include "jpeglib.h"
 std::vector<std::vector<double>>
 get_interocular_distances(const std::vector<std::vector<dlib::full_object_detection>>& objects);
 
