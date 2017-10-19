@@ -17,6 +17,10 @@ set(videoio_srcs
   VideoSourceStills.cpp
   VideoSourceTest.h
   VideoSourceTest.cpp
+  VideoSourceCVWebCam.h
+  VideoSourceCVWebCam.cpp
+  VideoSinkCVDisplay.h
+  VideoSinkCVDisplay.cpp
   )
 
 if(APPLE)

@@ -9,6 +9,7 @@
  */
 
 #include "videoio/VideoSinkCV.h"
+#include "VideoSinkCVDisplay.h"
 
 // clang-format off
 #if defined(__APPLE__) && defined(DRISHTI_USE_AVFOUNDATION)
@@ -42,6 +43,9 @@ std::shared_ptr<VideoSinkCV> VideoSinkCV::create(const std::string& filename, co
             return std::make_shared<VideoSinkApple>(filename);
             break;
 #endif
+		case ".display"_hash:
+			return std::make_shared<VideoSinkCVDisplay>(bfs::path(filename).filename().string());
+			break;
         // not supported
         default:
             CV_Assert(false);

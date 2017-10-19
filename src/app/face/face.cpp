@@ -230,11 +230,11 @@ int gauze_main(int argc, char** argv)
         logger->error("Must specify input image or list of images");
         return 1;
     }
-    if (!drishti::cli::file::exists(sInput))
+  /*  if (!drishti::cli::file::exists(sInput))
     {
         logger->error("Specified input file does not exist or is not readable");
         return 1;
-    }
+    }*/
 
     if(!sFactory.empty())
     {
@@ -388,7 +388,8 @@ int gauze_main(int argc, char** argv)
 
     if (threads == 1 || threads == 0 || doDisplay || !video->isRandomAccess())
     {
-        harness({ 0, static_cast<int>(video->count()) });
+		//while(true) harness({ 0, static_cast<int>(video->count()) });
+		while (true) harness({ 0, 30 });
     }
     else
     {

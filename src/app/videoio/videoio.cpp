@@ -9,6 +9,7 @@
 */
 
 #include "VideoSourceCV.h"
+#include "VideoSinkCV.h"
 
 #include "drishti/core/Logger.h"
 
@@ -25,42 +26,61 @@ int gauze_main(int argc, char** argv)
 {
     auto logger = drishti::core::Logger::create("test-videoio");
 
-    std::string sInput, sOutput;
+    std::string sInput, sOutput, sWindowTitle;
     cxxopts::Options options("test-videoio", "Dump video frames to stills.");
-
+	bool doFPSOnly = false;
+	
     // clang-format off
     options.add_options()
         ("i,input", "Input file", cxxopts::value<std::string>(sInput))
         ("o,output", "Output directory", cxxopts::value<std::string>(sOutput))
+		("f,fps", "Compute frame rate instead of saving", cxxopts::value<bool>(doFPSOnly))
+		("d,display","Display the captured video", cxxopts::value<std::string>(sWindowTitle))
         ("h,help", "Print help message");
     // clang-format on
 
     options.parse(argc, argv);
-    if (sInput.empty() || sOutput.empty())
+    if (sInput.empty())
     {
-        logger->info("Must specify a valid input and output file");
+        logger->info("Must specify a valid input file");
     }
+	if (sOutput.empty() && !doFPSOnly)
+	{
+		logger->info("Must specify a valid output file");
+	}
 
     auto video = drishti::videoio::VideoSourceCV::create(sInput);
-    if (video == nullptr)
+	if (video == nullptr)
     {
         logger->error("Failed to read video {}", sInput);
         return -1;
     }
 
+	auto display = drishti::videoio::VideoSinkCV::create(sWindowTitle.append(".display"));
+
     drishti::videoio::VideoSourceCV::Frame frame;
-    for (int i = 0; i < 30; i++)
+	DWORD t0=GetTickCount();
+    for (int i = 0; i < 1000; i++)
     {
         frame = (*video)(i);
         if (frame.image.empty())
         {
             break;
         }
+		(*display)(frame.image);
 
-        std::stringstream ss;
-        ss << sOutput << "/frame_" << std::setw(4) << std::setfill('0') << i << ".png";
-        cv::imwrite(ss.str(), frame.image);
+		if (doFPSOnly && i%100==0) {
+			logger->info("Input frame rate = {}",  (1000.0f*i)/ (GetTickCount() - t0));
+		}
+		else {
+			std::stringstream ss;
+			ss << sOutput << "/frame_" << std::setw(4) << std::setfill('0') << i << ".png";
+			cv::imwrite(ss.str(), frame.image);
+		}
     }
+	
+	
+
     //while (!frame.image.empty())
     //    ;
 
