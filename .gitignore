@@ -65,3 +65,12 @@ TAGS
 passwords.cmake
 src/examples/integration/_builds
 src/examples/integration/_logs
+/src/app/wrapmug/.vs/wrapmug/v14/.suo
+/src/app/wrapmug/ipch/WRAPMUG-a7326f59/*.ipch
+/src/app/wrapmug/*.db
+/src/app/wrapmug/wrapmug/Debug
+/src/app/test-mugshot/bin/Debug
+/src/app/test-mugshot/bin/Release
+/src/app/test-mugshot/obj/Debug
+/src/app/test-mugshot/obj/Release
+/src/app/test-mugshot/*.user

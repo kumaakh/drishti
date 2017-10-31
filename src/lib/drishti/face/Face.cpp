@@ -105,6 +105,74 @@ std::vector<FaceModel::ContourVec> FaceModel::getFaceParts(bool fullEyes, bool b
     return features;
 };
 
+bool checkForGoodMugShot(cv::Rect& cropRoi, const FaceModel& face, cv::Rect canvasSize)
+{
+	// convert roi into 4:3
+	float a4by3 = 4.0f / 3.0f;
+	float growBy = 1.3f;
+
+	auto size = cv::Size(growBy*face.roi.value.width, growBy*face.roi.value.width*a4by3);
+
+	float aspect = (1.0f*face.roi.value.width) / face.roi.value.height;
+
+	if (aspect<1.0f)
+		size = cv::Size(growBy*face.roi.value.height / a4by3, growBy*face.roi.value.height);
+
+	//find center
+	auto center = cv::Point(
+		face.roi.value.x + (face.roi.value.width>> 1),
+		face.roi.value.y + (face.roi.value.height>> 1));
+
+	auto origin = center - cv::Point(size / 2);
+
+	cropRoi = cv::Rect(origin, size);
+
+	if ((cropRoi & canvasSize).area() < cropRoi.area())
+		return false; //outside
+
+	float grad = abs((face.eyeLeftCenter.value.y - face.eyeRightCenter.value.y) / (face.eyeLeftCenter.value.x - face.eyeRightCenter.value.x));
+
+	if (grad>0.2) return false;
+
+	/*float disparity= abs((face.eyeRightCenter.value.x+face.eyeLeftCenter.value.x- face.roi.value.width-2*face.roi.value.x) / face.roi.value.width);
+	printf("x1=%f x2=%f disp=%f\n", face.eyeRightCenter.value.x, face.eyeLeftCenter.value.x, disparity);
+
+	if (disparity > 0.07) return false;
+*/
+	// check how close are we to center, note center is flipped
+	int x = center.x - (canvasSize.width/2); int y = center.y - (canvasSize.height/2);
+	if (x*x + y*y > 0.05*canvasSize.width*canvasSize.width) return false; //off center
+
+	//check how good the zoom is should be more than 20% of the captured image
+	if (cropRoi.area() < 0.2*canvasSize.area())
+		return false;
+
+	return true;
+}
+
+cv::Rect flipVRect(const cv::Rect& r, const cv::Size& canvas)
+{
+	return cv::Rect(canvas.width - r.x - r.width, r.y, r.width, r.height);
+}
+
+
+bool FaceModel::checkForGoodMugShotAndDraw(cv::Rect& cropRoi, cv::Mat& canvas) const
+{
+	// ### Do the actual drawing ###
+	//cv::rectangle(canvas, flipVRect(roi, canvas.size()), { 255 ,0,0 }, 2, 8);
+	bool bGood = checkForGoodMugShot(cropRoi, *this, cv::Rect(cv::Point(0, 0), canvas.size()));
+
+	cv::Scalar color = { 0, 255, 0 };
+	if (!bGood) { color = { 0, 0, 255 }; }
+
+	cv::ellipse(canvas, cv::RotatedRect(cv::Point2f((canvas.cols >> 1), (canvas.rows >> 1)), cv::Size2f(300, 400), 0), color, 2);
+
+	//cv::rectangle(canvas, flipVRect(cropRoi, canvas.size()), color, 2, 8);
+
+	return bGood;
+}
+
+
 void FaceModel::draw(cv::Mat& canvas, int width, bool fullEyes, bool allPoints) const
 {
     static std::vector<cv::Vec3b> rainbow{

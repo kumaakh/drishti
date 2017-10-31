@@ -25,6 +25,8 @@
 #include "drishti/face/gpu/FaceStabilizer.h"
 #include "drishti/geometry/motion.h"
 
+#include "boost/format.hpp"
+
 // clang-format off
 #if defined(DRISHTI_USE_IMSHOW)
 #  include "imshow/imshow.h"
@@ -32,6 +34,7 @@
 // clang-format on
 
 #include "videoio/VideoSourceCV.h"
+#include "videoio/VideoSinkCV.h"
 
 // Package includes:
 #include "cxxopts.hpp"
@@ -44,7 +47,10 @@ static cv::Mat
 cropEyes(const cv::Mat& image, const drishti::face::FaceModel& face, const cv::Size& size, float scale, bool annotate);
 static void initWindow(const std::string& name);
 static bool writeAsJson(const std::string& filename, const std::vector<drishti::face::FaceModel>& faces);
-static void drawObjects(cv::Mat& canvas, const std::vector<drishti::face::FaceModel>& faces);
+static bool detetctMugshot(cv::Mat& canvas, const std::vector<drishti::face::FaceModel>& faces, cv::Rect& cropRoi);
+static bool cropMugShot(const cv::Mat& image, const cv::Rect& roi, cv::Mat& output);
+
+int gauze_main(int argc, char ** argv);
 static bool checkModel(LoggerPtr& logger, const std::string& sModel, const std::string& description);
 
 // Resize input image to detection objects of minimum width
@@ -133,277 +139,406 @@ protected:
     PaddedImage padded;
 };
 
-int gauze_main(int argc, char** argv)
-{
-    const auto argumentCount = argc;
+int takeMugShot(int camIdx, int width, int height, char *outBuff, int maxFrames=900) {
+	//initialization params
+	float scale = 1.0;
+	double cascCal = 0.0;
+	int minWidth = -1;
+	int imgCount = 0;
+	//make the output Mat from buff
+	cv::Mat output(height, width, CV_8UC3, outBuff, 3 * width);
+	auto logger = drishti::core::Logger::create("drishti-mugshot");
+	std::string sInput = str(boost::format("%1%.webcam") % camIdx);
+	auto factory = std::make_shared<drishti::face::FaceDetectorFactoryJson>(".\\assets\\drishti_assets.json");
+	std::vector<std::pair<std::string, std::string>> config{
+		{ factory->sFaceDetector, "face-detector" },
+		{ factory->sFaceDetectorMean, "face-detector-mean" },
+		{ factory->sFaceRegressor, "face-regressor" },
+		{ factory->sEyeRegressor, "eye-regressor" }
+	};
+	for (const auto& c : config)
+	{
+		if (checkModel(logger, c.first, c.second))
+		{
+			return 1;
+		}
+	}
+	auto video = drishti::videoio::VideoSourceCV::create(sInput);
+	auto display = drishti::videoio::VideoSinkCV::create("View Finder.display");
+	// Allocate resource manager:
+	using FaceDetectorPtr = std::unique_ptr<drishti::face::FaceDetector>;
+	drishti::core::LazyParallelResource<std::thread::id, FaceDetectorPtr> manager = [&]() {
 
-    // Instantiate line logger:
-    auto logger = drishti::core::Logger::create("drishti-acf");
+		FaceDetectorPtr detector = drishti::core::make_unique<drishti::face::FaceDetector>(*factory);
+		detector->setScaling(scale);
+		if (detector)
+		{
+			// Cofigure parameters:
+			detector->setDoNMS(true);
+			detector->setDoNMSGlobal(true);
 
-    // ############################
-    // ### Command line parsing ###
-    // ############################
+			auto acf = dynamic_cast<drishti::acf::Detector*>(detector->getDetector());
+			if (acf && acf->good())
+			{
+				// Cascade threhsold adjustment:
+				if (cascCal != 0.f)
+				{
+					drishti::acf::Detector::Modify dflt;
+					dflt.cascThr = { "cascThr", -1.0 };
+					dflt.cascCal = { "cascCal", cascCal };
+					acf->acfModify(dflt);
+				}
+			}
+			else
+			{
+				detector.release();
+			}
+		}
 
-    std::string sInput, sOutput;
-    int threads = -1;
-    bool doEyes = false;
-    bool doPause = false;
-    bool doDisplay = false;
-    bool doAnnotation = false;
-    bool doPositiveOnly = false;
-    float scale = 1.0;
-    double cascCal = 0.0;
-    int minWidth = -1; // minimum object width
+		return detector;
+	};
 
-    // Use factory as container for CLI inputs:
-    std::string sFactory;
-    auto factory = std::make_shared<drishti::face::FaceDetectorFactory>();
+	std::size_t total = 0;
+	bool done = false;
+	// Parallel loop:
+	while(!done && imgCount <maxFrames) {
+		// Get thread specific segmenter lazily:
+		auto& detector = manager[std::this_thread::get_id()];
+		assert(detector);
 
-    float minZ = 0.1f, maxZ = 1.f;
-    
-    cxxopts::Options options("drishti-acf", "Command line interface for ACF object detection (see Piotr's toolbox)");
+		// Load image:
+		auto frame = (*video)(imgCount++);
+		const auto& image = frame.image;
 
-    // clang-format off
-    options.add_options()
-        ("i,input", "Input file", cxxopts::value<std::string>(sInput))
-        ("o,output", "Output directory", cxxopts::value<std::string>(sOutput))
-    
-        // Detection parameters:
-        ("l,min", "Minimum object width (lower bound)", cxxopts::value<int>(minWidth))
-        ("c,calibration", "Cascade calibration", cxxopts::value<double>(cascCal))
-        ("s,scale", "Scale term for detection->regression mapping", cxxopts::value<float>(scale))
+		if (!image.empty())
+		{
+			cv::Mat Irgb;
+			cv::cvtColor(image, Irgb, cv::COLOR_BGR2RGB);
 
-        // Clasifier and regressor models:
-        ("D,detector", "Face detector model", cxxopts::value<std::string>(factory->sFaceDetector))
-        ("M,mean", "Face detector mean", cxxopts::value<std::string>(factory->sFaceDetectorMean))
-        ("R,regressor", "Face regressor", cxxopts::value<std::string>(factory->sFaceRegressor))
-        ("E,eye", "Eye model", cxxopts::value<std::string>(factory->sEyeRegressor))
-    
-        // ... factory can be used instead of D,M,R,E
-        ("F,factory", "Factory (json model zoo)", cxxopts::value<std::string>(sFactory))
-    
-    
-    
-        // Output parameters:
-        ("e,eyes", "Crop eyes", cxxopts::value<bool>(doEyes))
-        ("a,annotate", "Create annotated images", cxxopts::value<bool>(doAnnotation))
-        ("d,display", "Display window (single thread)", cxxopts::value<bool>(doDisplay))
-        ("0,pause", "Pause display window", cxxopts::value<bool>(doPause))
-        ("p,positive", "Limit output to positve examples", cxxopts::value<bool>(doPositiveOnly))
-        ("t,threads", "Thread count", cxxopts::value<int>(threads))
-        ("h,help", "Print help message");
-    // clang-format on
+			Resizer resizer(Irgb, detector->getWindowSize(), minWidth);
 
-    options.parse(argc, argv);
+			std::vector<drishti::face::FaceModel> faces;
+			const auto& Hdr = resizer.getDetectorToRegressor();
+			(*detector)(resizer.getPlanar(), resizer.getPadded(), faces, Hdr);
 
-    if ((argumentCount <= 1) || options.count("help"))
-    {
-        std::cout << options.help({ "" }) << std::endl;
-        return 0;
-    }
+			resizer(faces);
 
-    // ############################################
-    // ### Command line argument error checking ###
-    // ############################################
+			if(faces.size() > 0)
+			{
+				logger->info("{}/{} = {}", ++total, video->count(),  faces.size());
 
-    // ### Directory
-    if (sOutput.empty())
-    {
-        logger->error("Must specify output directory");
-        return 1;
-    }
-
-    if (drishti::cli::directory::exists(sOutput, ".drishti-acf"))
-    {
-        std::string filename = sOutput + "/.drishti-acf";
-        remove(filename.c_str());
-    }
-    else
-    {
-        logger->error("Specified directory {} does not exist or is not writeable", sOutput);
-        return 1;
-    }
-
-    // ### Input
-    if (sInput.empty())
-    {
-        logger->error("Must specify input image or list of images");
-        return 1;
-    }
-  /*  if (!drishti::cli::file::exists(sInput))
-    {
-        logger->error("Specified input file does not exist or is not readable");
-        return 1;
-    }*/
-
-    if(!sFactory.empty())
-    {
-        factory = std::make_shared<drishti::face::FaceDetectorFactoryJson>(sFactory);
-    }
-
-    // Check for valid models
-    std::vector<std::pair<std::string, std::string>> config{
-        { factory->sFaceDetector, "face-detector" },
-        { factory->sFaceDetectorMean, "face-detector-mean" },
-        { factory->sFaceRegressor, "face-regressor" },
-        { factory->sEyeRegressor, "eye-regressor" }
-    };
-
-    for (const auto& c : config)
-    {
-        if (checkModel(logger, c.first, c.second))
-        {
-            return 1;
-        }
-    }
-
-#if defined(DRISHTI_USE_IMSHOW)
-    if (doDisplay)
-    {
-        initWindow("face");
-    }
-#endif
-
-    auto video = drishti::videoio::VideoSourceCV::create(sInput);
-
-    // Allocate resource manager:
-    using FaceDetectorPtr = std::unique_ptr<drishti::face::FaceDetector>;
-    drishti::core::LazyParallelResource<std::thread::id, FaceDetectorPtr> manager = [&]() {
-
-        FaceDetectorPtr detector = drishti::core::make_unique<drishti::face::FaceDetector>(*factory);
-        detector->setScaling(scale);
-        if (detector)
-        {
-            // Cofigure parameters:
-            detector->setDoNMS(true);
-            detector->setDoNMSGlobal(true);
-
-            auto acf = dynamic_cast<drishti::acf::Detector*>(detector->getDetector());
-            if (acf && acf->good())
-            {
-                // Cascade threhsold adjustment:
-                if (cascCal != 0.f)
-                {
-                    drishti::acf::Detector::Modify dflt;
-                    dflt.cascThr = { "cascThr", -1.0 };
-                    dflt.cascCal = { "cascCal", cascCal };
-                    acf->acfModify(dflt);
-                }
-            }
-            else
-            {
-                detector.release();
-            }
-        }
-
-        return detector;
-    };
-
-    std::size_t total = 0;
-
-    // Parallel loop:
-    drishti::core::ParallelHomogeneousLambda harness = [&](int i) {
-        // Get thread specific segmenter lazily:
-        auto& detector = manager[std::this_thread::get_id()];
-        assert(detector);
-
-        // Load current image:
-        auto frame = (*video)(i);
-        const auto& image = frame.image;
-
-        if (!image.empty())
-        {
-            cv::Mat Irgb;
-            cv::cvtColor(image, Irgb, cv::COLOR_BGR2RGB);
-
-            Resizer resizer(Irgb, detector->getWindowSize(), minWidth);
-
-            std::vector<drishti::face::FaceModel> faces;
-            const auto& Hdr = resizer.getDetectorToRegressor();
-            (*detector)(resizer.getPlanar(), resizer.getPadded(), faces, Hdr);
-
-            resizer(faces);
-
-            if (!doPositiveOnly || (faces.size() > 0))
-            {
-                // Construct valid filename with no extension:
-                std::string base = drishti::core::basename(frame.name);
-                std::string filename = sOutput + "/" + base;
-
-                logger->info("{}/{} {} = {}", ++total, video->count(), filename, faces.size());
-
-                // Save detection results in JSON:
-                if (!writeAsJson(filename + ".json", faces))
-                {
-                    logger->error("Failed to write: {}.json", filename);
-                }
-
-#if defined(DRISHTI_USE_IMSHOW)
-                int windowCount = 0;
-                drishti::core::scope_guard waiter = [&]() {
-                    if (windowCount > 0)
-                    {
-                        glfw::waitKey(doPause ? 0 : 1);
-                    }
-                };
-#endif
-
-                if (doEyes)
-                {
-                    for (int i = 0; i < faces.size(); i++)
-                    {
-                        cv::Mat eyes = cropEyes(image, faces[i], { 640, 240 }, 0.666f, doAnnotation);
-
-                        std::stringstream ss;
-                        ss << std::setfill('0') << std::setw(2) << i;
-                        cv::imwrite(filename + ss.str() + "_eyes.png", eyes);
-
-#if defined(DRISHTI_USE_IMSHOW)
-                        if (doDisplay)
-                        {
-                            windowCount++;
-                            glfw::imshow("eyes", eyes);
-                        }
-#endif
-                    }
-                }
-
-                if (doAnnotation)
-                {
-                    cv::Mat canvas = image.clone();
-                    drawObjects(canvas, faces);
-                    cv::imwrite(filename + "_faces.png", canvas);
-
-#if defined(DRISHTI_USE_IMSHOW)
-                    if (doDisplay)
-                    {
-                        windowCount++;
-                        glfw::imshow("face", canvas);
-                    }
-#endif
-                }
-            }
-        }
-    };
-
-    if (threads == 1 || threads == 0 || doDisplay || !video->isRandomAccess())
-    {
-		//while(true) harness({ 0, static_cast<int>(video->count()) });
-		while (true) harness({ 0, 30 });
-    }
-    else
-    {
-        cv::parallel_for_({ 0, static_cast<int>(video->count()) }, harness, std::max(threads, -1));
-    }
-
-    return 0;
+				if (!done)
+				{
+					cv::Mat canvas(image.rows, image.cols, image.type());
+					cv::flip(image, canvas, 1);
+					cv::Rect cropRoi;
+					bool bFound = detetctMugshot(canvas, faces, cropRoi);
+					(*display)(canvas);
+					if (bFound)
+					{
+						cropMugShot(image, cropRoi, output);
+						done = true;
+					}
+				}
+			}
+		}
+	}
+	return (done)?0:2; //2=> timedOut
 }
+//
+//int gauze_main(int argc, char** argv)
+//{
+//	cv::Mat output(640, 480, CV_8UC3);
+//    const auto argumentCount = argc;
+//
+//    // Instantiate line logger:
+//    auto logger = drishti::core::Logger::create("drishti-acf");
+//
+//    // ############################
+//    // ### Command line parsing ###
+//    // ############################
+//
+//    std::string sInput, sOutput;
+//    int threads = -1;
+//    bool doEyes = false;
+//    bool doPause = false;
+//    bool doDisplay = false;
+//    bool doAnnotation = false;
+//    bool doPositiveOnly = false;
+//	bool done = false;
+//    float scale = 1.0;
+//    double cascCal = 0.0;
+//    int minWidth = -1; // minimum object width
+//
+//    // Use factory as container for CLI inputs:
+//    std::string sFactory;
+//    auto factory = std::make_shared<drishti::face::FaceDetectorFactory>();
+//
+//    float minZ = 0.1f, maxZ = 1.f;
+//    
+//    cxxopts::Options options("drishti-acf", "Command line interface for ACF object detection (see Piotr's toolbox)");
+//
+//    // clang-format off
+//    options.add_options()
+//        ("i,input", "Input file", cxxopts::value<std::string>(sInput))
+//        ("o,output", "Output directory", cxxopts::value<std::string>(sOutput))
+//    
+//        // Detection parameters:
+//        ("l,min", "Minimum object width (lower bound)", cxxopts::value<int>(minWidth))
+//        ("c,calibration", "Cascade calibration", cxxopts::value<double>(cascCal))
+//        ("s,scale", "Scale term for detection->regression mapping", cxxopts::value<float>(scale))
+//
+//        // Clasifier and regressor models:
+//        ("D,detector", "Face detector model", cxxopts::value<std::string>(factory->sFaceDetector))
+//        ("M,mean", "Face detector mean", cxxopts::value<std::string>(factory->sFaceDetectorMean))
+//        ("R,regressor", "Face regressor", cxxopts::value<std::string>(factory->sFaceRegressor))
+//        ("E,eye", "Eye model", cxxopts::value<std::string>(factory->sEyeRegressor))
+//    
+//        // ... factory can be used instead of D,M,R,E
+//        ("F,factory", "Factory (json model zoo)", cxxopts::value<std::string>(sFactory))
+//    
+//    
+//    
+//        // Output parameters:
+//        ("e,eyes", "Crop eyes", cxxopts::value<bool>(doEyes))
+//        ("a,annotate", "Create annotated images", cxxopts::value<bool>(doAnnotation))
+//        ("d,display", "Display window (single thread)", cxxopts::value<bool>(doDisplay))
+//        ("0,pause", "Pause display window", cxxopts::value<bool>(doPause))
+//        ("p,positive", "Limit output to positve examples", cxxopts::value<bool>(doPositiveOnly))
+//        ("t,threads", "Thread count", cxxopts::value<int>(threads))
+//        ("h,help", "Print help message");
+//    // clang-format on
+//
+//    options.parse(argc, argv);
+//
+//    if ((argumentCount <= 1) || options.count("help"))
+//    {
+//        std::cout << options.help({ "" }) << std::endl;
+//        return 0;
+//    }
+//
+//    // ############################################
+//    // ### Command line argument error checking ###
+//    // ############################################
+//
+//    // ### Directory
+//    if (sOutput.empty())
+//    {
+//        logger->error("Must specify output directory");
+//        return 1;
+//    }
+//
+//    if (drishti::cli::directory::exists(sOutput, ".drishti-acf"))
+//    {
+//        std::string filename = sOutput + "/.drishti-acf";
+//        remove(filename.c_str());
+//    }
+//    else
+//    {
+//        logger->error("Specified directory {} does not exist or is not writeable", sOutput);
+//        return 1;
+//    }
+//
+//    // ### Input
+//    if (sInput.empty())
+//    {
+//        logger->error("Must specify input image or list of images");
+//        return 1;
+//    }
+//  /*  if (!drishti::cli::file::exists(sInput))
+//    {
+//        logger->error("Specified input file does not exist or is not readable");
+//        return 1;
+//    }*/
+//
+//    if(!sFactory.empty())
+//    {
+//        factory = std::make_shared<drishti::face::FaceDetectorFactoryJson>(sFactory);
+//    }
+//
+//    // Check for valid models
+//    std::vector<std::pair<std::string, std::string>> config{
+//        { factory->sFaceDetector, "face-detector" },
+//        { factory->sFaceDetectorMean, "face-detector-mean" },
+//        { factory->sFaceRegressor, "face-regressor" },
+//        { factory->sEyeRegressor, "eye-regressor" }
+//    };
+//
+//    for (const auto& c : config)
+//    {
+//        if (checkModel(logger, c.first, c.second))
+//        {
+//            return 1;
+//        }
+//    }
+//
+//#if defined(DRISHTI_USE_IMSHOW)
+//    if (doDisplay)
+//    {
+//        initWindow("face");
+//    }
+//#endif
+//
+//    auto video = drishti::videoio::VideoSourceCV::create(sInput);
+//	auto display = drishti::videoio::VideoSinkCV::create("View Finder.display");
+//
+//    // Allocate resource manager:
+//    using FaceDetectorPtr = std::unique_ptr<drishti::face::FaceDetector>;
+//    drishti::core::LazyParallelResource<std::thread::id, FaceDetectorPtr> manager = [&]() {
+//
+//        FaceDetectorPtr detector = drishti::core::make_unique<drishti::face::FaceDetector>(*factory);
+//        detector->setScaling(scale);
+//        if (detector)
+//        {
+//            // Cofigure parameters:
+//            detector->setDoNMS(true);
+//            detector->setDoNMSGlobal(true);
+//
+//            auto acf = dynamic_cast<drishti::acf::Detector*>(detector->getDetector());
+//            if (acf && acf->good())
+//            {
+//                // Cascade threhsold adjustment:
+//                if (cascCal != 0.f)
+//                {
+//                    drishti::acf::Detector::Modify dflt;
+//                    dflt.cascThr = { "cascThr", -1.0 };
+//                    dflt.cascCal = { "cascCal", cascCal };
+//                    acf->acfModify(dflt);
+//                }
+//            }
+//            else
+//            {
+//                detector.release();
+//            }
+//        }
+//
+//        return detector;
+//    };
+//
+//    std::size_t total = 0;
+//	
+//
+//    // Parallel loop:
+//    drishti::core::ParallelHomogeneousLambda harness = [&](int i) {
+//        // Get thread specific segmenter lazily:
+//        auto& detector = manager[std::this_thread::get_id()];
+//        assert(detector);
+//
+//        // Load current image:
+//        auto frame = (*video)(i);
+//        const auto& image = frame.image;
+//
+//        if (!image.empty())
+//        {
+//            cv::Mat Irgb;
+//            cv::cvtColor(image, Irgb, cv::COLOR_BGR2RGB);
+//
+//            Resizer resizer(Irgb, detector->getWindowSize(), minWidth);
+//
+//            std::vector<drishti::face::FaceModel> faces;
+//            const auto& Hdr = resizer.getDetectorToRegressor();
+//            (*detector)(resizer.getPlanar(), resizer.getPadded(), faces, Hdr);
+//
+//            resizer(faces);
+//
+//            if (!doPositiveOnly || (faces.size() > 0))
+//            {
+//                // Construct valid filename with no extension:
+//                std::string base = drishti::core::basename(frame.name);
+//                std::string filename = sOutput + "/" + base;
+//
+//                logger->info("{}/{} {} = {}", ++total, video->count(), filename, faces.size());
+//
+//                // Save detection results in JSON:
+//                if (!writeAsJson(filename + ".json", faces))
+//                {
+//                    logger->error("Failed to write: {}.json", filename);
+//                }
+//
+//#if defined(DRISHTI_USE_IMSHOW)
+//                int windowCount = 0;
+//                drishti::core::scope_guard waiter = [&]() {
+//                    if (windowCount > 0)
+//                    {
+//                        glfw::waitKey(doPause ? 0 : 1);
+//                    }
+//                };
+//#endif
+//
+//                if (doEyes)
+//                {
+//                    for (int i = 0; i < faces.size(); i++)
+//                    {
+//                        cv::Mat eyes = cropEyes(image, faces[i], { 640, 240 }, 0.666f, doAnnotation);
+//
+//                        std::stringstream ss;
+//                        ss << std::setfill('0') << std::setw(2) << i;
+//                        cv::imwrite(filename + ss.str() + "_eyes.png", eyes);
+//
+//#if defined(DRISHTI_USE_IMSHOW)
+//                        if (doDisplay)
+//                        {
+//                            windowCount++;
+//                            glfw::imshow("eyes", eyes);
+//                        }
+//#endif
+//                    }
+//                }
+//
+//                if (!done)
+//                {
+//					cv::Mat canvas(image.rows,image.cols, image.type());
+//					cv::flip(image, canvas, 1);
+//					cv::Rect cropRoi;
+//					bool bFound = detetctMugshot(canvas, faces, cropRoi);
+//					(*display)(canvas);
+//					if (bFound)
+//					{
+//
+//						cropMugShot(image, cropRoi,output);
+//						cv::imwrite("mugshot.jpg", output);
+//						done = true;
+//					}
+//
+//					
+//
+//#if defined(DRISHTI_USE_IMSHOW)
+//                    if (doDisplay)
+//                    {
+//                        windowCount++;
+//                        glfw::imshow("face", canvas);
+//                    }
+//#endif
+//                }
+//            }
+//        }
+//    };
+//
+//    if (threads == 1 || threads == 0 || doDisplay || !video->isRandomAccess())
+//    {
+//		//while(true) harness({ 0, static_cast<int>(video->count()) });
+//		while (!done) harness({ 0, 30 });
+//    }
+//    else
+//    {
+//        cv::parallel_for_({ 0, static_cast<int>(video->count()) }, harness, std::max(threads, -1));
+//    }
+//
+//    return 0;
+//}
 
 int main(int argc, char** argv)
 {
+	const int w = 480, h = 640;
     try
     {
-        return gauze_main(argc, argv);
+		char buff[w * h * 3];
+		int rc=takeMugShot(0, 480, 640, buff);
+		if (rc == 0)
+		{
+			cv::Mat output(h, w, CV_8UC3, buff, 3 * w);
+			cv::imwrite("mugshot.jpg", output);
+		}
     }
     catch (std::exception& e)
     {
@@ -472,13 +607,22 @@ writeAsJson(const std::string& filename, const std::vector<drishti::face::FaceMo
     return ofs.good();
 }
 
-static void
-drawObjects(cv::Mat& canvas, const std::vector<drishti::face::FaceModel>& faces)
+static bool
+detetctMugshot(cv::Mat& canvas, const std::vector<drishti::face::FaceModel>& faces, cv::Rect& cropRoi)
 {
+	if (faces.size() != 1) return false;
     for (const auto& f : faces)
     {
-        f.draw(canvas, 2, true, true);
+		return f.checkForGoodMugShotAndDraw(cropRoi,canvas);
     }
+	return false;
+}
+
+static bool cropMugShot(const cv::Mat& source, const cv::Rect& roi, cv::Mat& dest)
+{
+	cv::Mat croppedRef(source, roi);
+	cv::resize(croppedRef, dest, dest.size());
+	return true;
 }
 
 #if defined(DRISHTI_USE_IMSHOW)

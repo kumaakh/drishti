@@ -111,7 +111,9 @@ struct FaceModel
         *this = *this * s;
         return *this;
     }
+	bool checkForGoodMugShotAndDraw(cv::Rect& cropRoi, cv::Mat& canvas) const;
 
+	// needs cleanup, separate the drawing from heuristic check
     void draw(cv::Mat& canvas, int width = 1, bool fullEyes = false, bool allPoints = false) const;
 
     // ((( IO )))
