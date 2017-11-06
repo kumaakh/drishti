@@ -248,7 +248,7 @@ takeMugShot(int camIdx, int width, int height, unsigned char *outBuff, int maxFr
 					streak = (bFound) ? (streak + 1) : (0);
 
 					(*display)(canvas);
-					if (streak>10)
+					if (streak>1000)
 					{
 						cropMugShot(image, cropRoi, output);
 						done = true;

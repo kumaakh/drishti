@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-//using wrapmug;
+
 
 namespace test_mugshot
 {
@@ -21,7 +21,6 @@ namespace test_mugshot
 
         private void btnTakePicture_Click(object sender, EventArgs e)
         {
-            // Task t = new Task(() => { wrapmug.MugshotMaker.takeMugShotCLR(0, 900); });
             Task t = new Task(() => {
                 Image img = MugshotMaker.takeMugShot(0, 900);
                 if (img != null){pbSnap.Image = img;}
